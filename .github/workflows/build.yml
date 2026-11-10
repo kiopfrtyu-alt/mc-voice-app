@@ -1,0 +1,49 @@
+name: build-apk
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rebuild folders from flat file names
+        run: |
+          for f in *__*; do
+            [ -f "$f" ] || continue
+            d="${f//__//}"
+            mkdir -p "$(dirname "$d")"
+            mv "$f" "$d"
+          done
+          find . -path ./.git -prune -o -type f -print | sort
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Build debug APK
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MinecraftVoice-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Minecraft Voice (APK ล่าสุด)
+          files: app/build/outputs/apk/debug/app-debug.apk
