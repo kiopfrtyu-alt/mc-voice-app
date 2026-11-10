@@ -105,6 +105,11 @@ class MainActivity : Activity() {
         runOnUiThread { web.evaluateJavascript(js, null) }
     }
 
+    /** รันสคริปต์แล้วรับผลลัพธ์กลับ (ผลลัพธ์เป็นสตริง JSON) */
+    fun evalJs(js: String, cb: (String?) -> Unit) {
+        runOnUiThread { web.evaluateJavascript(js) { cb(it) } }
+    }
+
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         if (web.canGoBack()) {

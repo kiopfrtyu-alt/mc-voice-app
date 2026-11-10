@@ -4,21 +4,27 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.RemoteInput
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
+import org.json.JSONArray
 
 /**
  * บริการเบื้องหน้าชนิดไมค์ (foreground service, type = microphone)
  * ทำให้ Android ไม่ตัดไมค์ตอนผู้เล่นสลับไปเล่น Minecraft
- * แถบแจ้งเตือนมีปุ่ม "ปิด/เปิดไมค์" และ "ปิดแอป"
+ * แถบแจ้งเตือนมีปุ่ม: ใส่รหัส (พิมพ์รหัส 6 หลักได้เลยโดยไม่ต้องออกจากเกม), ปิด/เปิดไมค์, ปิดแอป
  */
 class VoiceService : Service() {
 
     private var wake: PowerManager.WakeLock? = null
+    private val handler = Handler(Looper.getMainLooper())
+    private var status: String = DEFAULT_STATUS
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -34,17 +40,56 @@ class VoiceService : Service() {
                 stopSelf()
                 return START_NOT_STICKY
             }
+            ACTION_CODE -> {
+                val raw = intent?.let { RemoteInput.getResultsFromIntent(it) }?.getCharSequence(KEY_CODE)?.toString() ?: ""
+                val code = raw.filter { it.isDigit() }
+                if (code.length != 6) {
+                    status = "รหัสต้องเป็นตัวเลข 6 หลัก ลองกด \"ใส่รหัส\" ใหม่"
+                    refresh()
+                    return START_NOT_STICKY
+                }
+                status = "กำลังเชื่อมต่อด้วยรหัส $code ..."
+                refresh()
+                // ใส่รหัสลงช่องในหน้าเว็บแล้วกดเข้าห้อง (code มีแต่ตัวเลข 6 หลัก ใส่ในสคริปต์ได้อย่างปลอดภัย)
+                MainActivity.instance?.runJs(
+                    "(function(c){var e=document.getElementById('code'),b=document.getElementById('go');" +
+                        "if(e&&b){e.value=c;b.disabled=false;b.click()}})('" + code + "')"
+                )
+                handler.postDelayed({ readStatus() }, 3500)
+                handler.postDelayed({ readStatus() }, 9000)
+                return START_NOT_STICKY
+            }
         }
         startInForeground()
         return START_NOT_STICKY
     }
 
-    private fun startInForeground() {
+    /** อ่านข้อความสถานะจากหน้าเว็บ แล้วแสดงในแถบแจ้งเตือน */
+    private fun readStatus() {
+        val act = MainActivity.instance ?: return
+        act.evalJs("(function(){var s=document.getElementById('st');return s?s.textContent:''})()") { v ->
+            if (v == null) return@evalJs
+            val t = try {
+                JSONArray("[$v]").getString(0)
+            } catch (e: Exception) {
+                v
+            }
+            if (t.isNotBlank() && t != "null") {
+                status = t
+                refresh()
+            }
+        }
+    }
+
+    private fun channel() {
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL, "Minecraft Voice", NotificationManager.IMPORTANCE_LOW)
         )
+    }
 
+    @Suppress("DEPRECATION")
+    private fun buildNotification(): Notification {
         val open = PendingIntent.getActivity(
             this, 0,
             Intent(this, MainActivity::class.java)
@@ -61,18 +106,38 @@ class VoiceService : Service() {
             Intent(this, VoiceService::class.java).setAction(ACTION_QUIT),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
+        // ช่องพิมพ์ในแถบแจ้งเตือนต้องใช้ PendingIntent แบบ mutable (ระบบเติมข้อความที่พิมพ์ลงใน Intent)
+        val codeIntent = PendingIntent.getService(
+            this, 3,
+            Intent(this, VoiceService::class.java).setAction(ACTION_CODE),
+            PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val remote = RemoteInput.Builder(KEY_CODE).setLabel("รหัส 6 หลักจากแชตเกม").build()
 
-        @Suppress("DEPRECATION")
-        val n = Notification.Builder(this, CHANNEL)
+        val codeAction = Notification.Action.Builder(0, "ใส่รหัส", codeIntent)
+            .addRemoteInput(remote)
+            .build()
+
+        return Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle("Minecraft Voice กำลังทำงาน")
-            .setContentText("ไมค์ทำงานเบื้องหลัง แตะเพื่อกลับมาที่แอป")
+            .setContentText(status)
+            .setStyle(Notification.BigTextStyle().bigText(status))
             .setContentIntent(open)
             .setOngoing(true)
+            .addAction(codeAction)
             .addAction(0, "ปิด/เปิดไมค์", muteIntent)
             .addAction(0, "ปิดแอป", quitIntent)
             .build()
+    }
 
+    private fun refresh() {
+        getSystemService(NotificationManager::class.java).notify(NOTIF_ID, buildNotification())
+    }
+
+    private fun startInForeground() {
+        channel()
+        val n = buildNotification()
         if (Build.VERSION.SDK_INT >= 29) {
             startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
         } else {
@@ -88,6 +153,7 @@ class VoiceService : Service() {
     }
 
     override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
         wake?.let { if (it.isHeld) it.release() }
         wake = null
         super.onDestroy()
@@ -96,7 +162,10 @@ class VoiceService : Service() {
     companion object {
         private const val CHANNEL = "voice"
         private const val NOTIF_ID = 1
+        private const val KEY_CODE = "pair_code"
+        private const val DEFAULT_STATUS = "ไมค์ทำงานเบื้องหลัง กด \"ใส่รหัส\" เพื่อพิมพ์รหัสจากแชตเกม"
         const val ACTION_MUTE = "com.mcvoice.app.MUTE"
         const val ACTION_QUIT = "com.mcvoice.app.QUIT"
+        const val ACTION_CODE = "com.mcvoice.app.CODE"
     }
 }
