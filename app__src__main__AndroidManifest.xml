@@ -12,7 +12,7 @@
     <application
         android:allowBackup="false"
         android:icon="@android:drawable/ic_btn_speak_now"
-        android:label="Minecraft Voice"
+        android:label="Demnit DumVc"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
         android:usesCleartextTraffic="false">
 

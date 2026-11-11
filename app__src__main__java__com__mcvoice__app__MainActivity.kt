@@ -81,7 +81,7 @@ class MainActivity : Activity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != REQ_PERMS) return
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            Toast.makeText(this, "ต้องอนุญาตไมค์ก่อน แอปถึงจะส่งเสียงได้ (ตั้งค่า > แอป > Minecraft Voice > สิทธิ์)", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "ต้องอนุญาตไมค์ก่อน แอปถึงจะส่งเสียงได้ (ตั้งค่า > แอป > Demnit DumVc > สิทธิ์)", Toast.LENGTH_LONG).show()
         }
         startEverything()
     }

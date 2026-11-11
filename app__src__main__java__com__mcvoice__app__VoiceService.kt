@@ -84,7 +84,7 @@ class VoiceService : Service() {
     private fun channel() {
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL, "Minecraft Voice", NotificationManager.IMPORTANCE_LOW)
+            NotificationChannel(CHANNEL, "Demnit DumVc", NotificationManager.IMPORTANCE_LOW)
         )
     }
 
@@ -120,7 +120,7 @@ class VoiceService : Service() {
 
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setContentTitle("Minecraft Voice กำลังทำงาน")
+            .setContentTitle("Demnit DumVc กำลังทำงาน")
             .setContentText(status)
             .setStyle(Notification.BigTextStyle().bigText(status))
             .setContentIntent(open)
