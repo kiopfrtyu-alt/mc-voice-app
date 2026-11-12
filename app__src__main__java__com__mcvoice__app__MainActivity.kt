@@ -4,6 +4,8 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.provider.Settings
+import android.webkit.JavascriptInterface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -45,6 +47,7 @@ class MainActivity : Activity() {
         web.settings.domStorageEnabled = true
         web.settings.mediaPlaybackRequiresUserGesture = false
         web.webViewClient = WebViewClient()
+        web.addJavascriptInterface(BubbleBridge(), "AndroidBubble")
         // เก็บตัวประมวลผลหน้าเว็บให้สำคัญไว้แม้ไม่ได้อยู่หน้าจอ (ตอนสลับไปเล่นเกม) เสียงจะได้ไม่ถูกลดลำดับ/พัก
         if (Build.VERSION.SDK_INT >= 26) {
             web.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
@@ -104,6 +107,42 @@ class MainActivity : Activity() {
         }
     }
 
+    /** สะพานให้หน้าเว็บสั่งปุ่มลอย (ใช้ได้เฉพาะหน้าของเราเอง) */
+    inner class BubbleBridge {
+        @JavascriptInterface
+        fun isEnabled(): Boolean = Bubble.enabled(applicationContext)
+
+        @JavascriptInterface
+        fun setEnabled(on: Boolean) {
+            runOnUiThread {
+                Bubble.setEnabled(applicationContext, on)
+                if (on && !Bubble.canDraw(applicationContext)) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "เปิดสวิตช์ \"แสดงทับแอปอื่น\" ของ Demnit DumVc แล้วกลับมาที่แอป",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    try {
+                        startActivity(
+                            Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + packageName))
+                        )
+                    } catch (e: Exception) {
+                    }
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun setState(s: String) {
+            Bubble.setState(s)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        Bubble.refresh(applicationContext)
+    }
+
     /** ให้ VoiceService (ปุ่มในแถบแจ้งเตือน) สั่งสคริปต์ในหน้าเว็บได้ */
     fun runJs(js: String) {
         runOnUiThread { web.evaluateJavascript(js, null) }
@@ -125,6 +164,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         instance = null
+        Bubble.hide(applicationContext)
         stopService(Intent(this, VoiceService::class.java))
         web.destroy()
         super.onDestroy()
