@@ -2,25 +2,21 @@ package com.mcvoice.app
 
 import android.Manifest
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.provider.Settings
-import android.webkit.JavascriptInterface
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.webkit.PermissionRequest
-import android.webkit.WebChromeClient
-import android.webkit.WebView
-import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import android.widget.Toast
 
 /**
- * หน้าต่างหลัก: ห่อหน้าเว็บของรีเลย์ไว้ใน WebView
- * ไม่เรียก WebView.onPause() ตอนสลับไปเล่นเกม และมี VoiceService (บริการเบื้องหน้าชนิดไมค์)
- * คอยให้ระบบ Android ไม่ตัดไมค์ของแอปนี้
+ * หน้าต่างหลัก: แสดง WebView ของรีเลย์ (ตัว WebView เป็นของ WebHost ไม่ใช่ของ Activity นี้)
+ * ตอนออกจากหน้าจอ WebView จะถูกย้ายไปหน้าต่างลอย 1 พิกเซลเพื่อไม่ให้เสียงถูกพัก
+ * มี VoiceService (บริการเบื้องหน้าชนิดไมค์) คอยให้ระบบ Android ไม่ตัดไมค์ของแอปนี้
  */
 class MainActivity : Activity() {
 
@@ -30,43 +26,19 @@ class MainActivity : Activity() {
         private const val REQ_PERMS = 100
     }
 
-    private lateinit var web: WebView
-    private var loaded = false
+    private lateinit var container: FrameLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         instance = this
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        web = WebView(this)
+        container = FrameLayout(this)
         setContentView(
-            web,
+            container,
             ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         )
-        web.settings.javaScriptEnabled = true
-        web.settings.domStorageEnabled = true
-        web.settings.mediaPlaybackRequiresUserGesture = false
-        web.webViewClient = WebViewClient()
-        web.addJavascriptInterface(BubbleBridge(), "AndroidBubble")
-        // เก็บตัวประมวลผลหน้าเว็บให้สำคัญไว้แม้ไม่ได้อยู่หน้าจอ (ตอนสลับไปเล่นเกม) เสียงจะได้ไม่ถูกลดลำดับ/พัก
-        if (Build.VERSION.SDK_INT >= 26) {
-            web.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
-        }
-        web.webChromeClient = object : WebChromeClient() {
-            override fun onPermissionRequest(request: PermissionRequest) {
-                runOnUiThread {
-                    val ourHost = Uri.parse(BuildConfig.START_URL).host
-                    val fromUs = request.origin?.host == ourHost
-                    val micOk = checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
-                        PackageManager.PERMISSION_GRANTED
-                    if (fromUs && micOk) {
-                        request.grant(request.resources)
-                    } else {
-                        request.deny()
-                    }
-                }
-            }
-        }
+        WebHost.attach(this, container)
 
         val need = ArrayList<String>()
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -101,41 +73,23 @@ class MainActivity : Activity() {
                 Toast.makeText(this, "เริ่มบริการเบื้องหลังไม่ได้: " + e.message, Toast.LENGTH_LONG).show()
             }
         }
-        if (!loaded) {
-            loaded = true
-            web.loadUrl(BuildConfig.START_URL)
-        }
+        WebHost.load()
+        askOverlayIfNeeded()
     }
 
-    /** สะพานให้หน้าเว็บสั่งปุ่มลอย (ใช้ได้เฉพาะหน้าของเราเอง) */
-    inner class BubbleBridge {
-        @JavascriptInterface
-        fun isEnabled(): Boolean = Bubble.enabled(applicationContext)
+    /** ขอสิทธิ์ "แสดงทับแอปอื่น" (จำเป็นต่อการกันเสียงหลุด) ถามไม่เกิน 3 ครั้ง */
+    private fun askOverlayIfNeeded() {
+        if (Settings.canDrawOverlays(this)) return
+        val prefs = getSharedPreferences("app", Context.MODE_PRIVATE)
+        val n = prefs.getInt("overlay_asked", 0)
+        if (n >= 3) return
+        prefs.edit().putInt("overlay_asked", n + 1).apply()
+        WebHost.askOverlay(applicationContext)
+    }
 
-        @JavascriptInterface
-        fun setEnabled(on: Boolean) {
-            runOnUiThread {
-                Bubble.setEnabled(applicationContext, on)
-                if (on && !Bubble.canDraw(applicationContext)) {
-                    Toast.makeText(
-                        this@MainActivity,
-                        "เปิดสวิตช์ \"แสดงทับแอปอื่น\" ของ Demnit DumVc แล้วกลับมาที่แอป",
-                        Toast.LENGTH_LONG
-                    ).show()
-                    try {
-                        startActivity(
-                            Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + packageName))
-                        )
-                    } catch (e: Exception) {
-                    }
-                }
-            }
-        }
-
-        @JavascriptInterface
-        fun setState(s: String) {
-            Bubble.setState(s)
-        }
+    override fun onStart() {
+        super.onStart()
+        WebHost.attach(this, container)
     }
 
     override fun onResume() {
@@ -143,19 +97,19 @@ class MainActivity : Activity() {
         Bubble.refresh(applicationContext)
     }
 
-    /** ให้ VoiceService (ปุ่มในแถบแจ้งเตือน) สั่งสคริปต์ในหน้าเว็บได้ */
-    fun runJs(js: String) {
-        runOnUiThread { web.evaluateJavascript(js, null) }
+    override fun onStop() {
+        // ออกจากหน้าจอ (สลับไปเกม/พับแอป): ย้าย WebView ไปหน้าต่างลอยเพื่อให้เสียงไม่ถูกพัก
+        WebHost.toKeeper(this, container)
+        super.onStop()
     }
 
-    /** รันสคริปต์แล้วรับผลลัพธ์กลับ (ผลลัพธ์เป็นสตริง JSON) */
-    fun evalJs(js: String, cb: (String?) -> Unit) {
-        runOnUiThread { web.evaluateJavascript(js) { cb(it) } }
-    }
+    /** ให้ผู้เรียกเดิมใช้ต่อได้ (ตัวจริงอยู่ที่ WebHost) */
+    fun runJs(js: String) = WebHost.runJs(js)
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        if (web.canGoBack()) {
+        val web = WebHost.get()
+        if (web != null && web.canGoBack()) {
             web.goBack()
         } else {
             moveTaskToBack(true) // ไม่ปิดแอป ปล่อยให้ทำงานเบื้องหลัง
@@ -164,9 +118,11 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         instance = null
-        Bubble.hide(applicationContext)
-        stopService(Intent(this, VoiceService::class.java))
-        web.destroy()
+        if (isFinishing) {
+            Bubble.hide(applicationContext)
+            WebHost.destroy(applicationContext)
+            stopService(Intent(this, VoiceService::class.java))
+        }
         super.onDestroy()
     }
 }

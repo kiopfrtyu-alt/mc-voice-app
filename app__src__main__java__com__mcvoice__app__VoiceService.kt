@@ -32,10 +32,11 @@ class VoiceService : Service() {
         when (intent?.action) {
             ACTION_MUTE -> {
                 // กดปุ่มไมค์ในหน้าเว็บ (สลับเปิด/ปิด)
-                MainActivity.instance?.runJs("(function(){var b=document.getElementById('mic');if(b){b.click()}})()")
+                WebHost.runJs("(function(){var b=document.getElementById('mic');if(b){b.click()}})()")
                 return START_NOT_STICKY
             }
             ACTION_QUIT -> {
+                quitAll()
                 MainActivity.instance?.finishAndRemoveTask()
                 stopSelf()
                 return START_NOT_STICKY
@@ -51,7 +52,7 @@ class VoiceService : Service() {
                 status = "กำลังเชื่อมต่อด้วยรหัส $code ..."
                 refresh()
                 // ใส่รหัสลงช่องในหน้าเว็บแล้วกดเข้าห้อง (code มีแต่ตัวเลข 6 หลัก ใส่ในสคริปต์ได้อย่างปลอดภัย)
-                MainActivity.instance?.runJs(
+                WebHost.runJs(
                     "(function(c){var e=document.getElementById('code'),b=document.getElementById('go');" +
                         "if(e&&b){e.value=c;b.disabled=false;b.click()}})('" + code + "')"
                 )
@@ -66,8 +67,7 @@ class VoiceService : Service() {
 
     /** อ่านข้อความสถานะจากหน้าเว็บ แล้วแสดงในแถบแจ้งเตือน */
     private fun readStatus() {
-        val act = MainActivity.instance ?: return
-        act.evalJs("(function(){var s=document.getElementById('st');return s?s.textContent:''})()") { v ->
+        WebHost.evalJs("(function(){var s=document.getElementById('st');return s?s.textContent:''})()") { v ->
             if (v == null) return@evalJs
             val t = try {
                 JSONArray("[$v]").getString(0)
@@ -79,6 +79,19 @@ class VoiceService : Service() {
                 refresh()
             }
         }
+    }
+
+    /** ปิดทุกอย่าง: ปุ่มลอย หน้าเว็บ หน้าต่างลอย */
+    private fun quitAll() {
+        Bubble.hide(applicationContext)
+        WebHost.destroy(applicationContext)
+    }
+
+    /** ปัดแอปออกจากหน้ารายการแอปล่าสุด = ปิดแอปทั้งหมด */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        quitAll()
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
     }
 
     private fun channel() {
