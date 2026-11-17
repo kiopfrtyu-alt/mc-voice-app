@@ -3,14 +3,18 @@ package com.mcvoice.app
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.MutableContextWrapper
 import android.content.pm.PackageManager
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.graphics.PixelFormat
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
+import android.os.PowerManager
 import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
@@ -188,6 +192,105 @@ object WebHost {
         @JavascriptInterface
         fun setState(s: String) {
             Bubble.setState(s)
+        }
+
+        /** เสียงเกม: 0 = ไม่แตะ (ค่าเครื่อง) / 1 = โหมดโทร / 2 = โหมดสื่อ */
+        @JavascriptInterface
+        fun setAudioMode(m: Int) {
+            WebHost.main.post {
+                try {
+                    val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                    if (m == 0) return@post
+                    val outs = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+                    val headset = outs.any {
+                        when (it.type) {
+                            AudioDeviceInfo.TYPE_WIRED_HEADSET, AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+                            AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+                            AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> true
+                            else -> false
+                        }
+                    }
+                    if (m == 1) {
+                        am.mode = AudioManager.MODE_IN_COMMUNICATION
+                        if (Build.VERSION.SDK_INT >= 31) {
+                            if (headset) {
+                                am.clearCommunicationDevice()
+                            } else {
+                                val sp = am.availableCommunicationDevices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+                                if (sp != null) am.setCommunicationDevice(sp)
+                            }
+                        } else {
+                            @Suppress("DEPRECATION")
+                            am.isSpeakerphoneOn = !headset
+                        }
+                    } else {
+                        if (Build.VERSION.SDK_INT >= 31) am.clearCommunicationDevice()
+                        else {
+                            @Suppress("DEPRECATION")
+                            am.isSpeakerphoneOn = false
+                        }
+                        am.mode = AudioManager.MODE_NORMAL
+                    }
+                } catch (e: Exception) {
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun permStatus(): String {
+            val mic = app.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+            val overlay = Bubble.canDraw(app)
+            val battery = try {
+                (app.getSystemService(Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(app.packageName)
+            } catch (e: Exception) { false }
+            return "{\"mic\":$mic,\"overlay\":$overlay,\"battery\":$battery}"
+        }
+
+        @JavascriptInterface
+        fun permOpen(kind: String) {
+            WebHost.main.post {
+                try {
+                    when (kind) {
+                        "mic" -> {
+                            val act = MainActivity.instance
+                            val canAsk = act != null && act.shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)
+                            val firstTime = !app.getSharedPreferences("perm", Context.MODE_PRIVATE).getBoolean("asked_mic", false)
+                            if (act != null && (canAsk || firstTime)) {
+                                app.getSharedPreferences("perm", Context.MODE_PRIVATE).edit().putBoolean("asked_mic", true).apply()
+                                act.askMic()
+                            } else openAppDetails()
+                        }
+                        "overlay" -> WebHost.askOverlay(app)
+                        "battery" -> {
+                            try {
+                                startSettings(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + app.packageName)))
+                            } catch (e: Exception) {
+                                startSettings(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                            }
+                        }
+                        "autostart" -> {
+                            try {
+                                startSettings(Intent().setComponent(ComponentName(
+                                    "com.miui.securitycenter",
+                                    "com.miui.permcenter.autostart.AutoStartManagementActivity")))
+                            } catch (e: Exception) {
+                                openAppDetails()
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Toast.makeText(app, "เปิดหน้าตั้งค่าไม่ได้ ลองเปิดเองที่ ตั้งค่า > แอป", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+
+        private fun startSettings(i: Intent) {
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            app.startActivity(i)
+        }
+
+        private fun openAppDetails() {
+            startSettings(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + app.packageName)))
         }
     }
 }

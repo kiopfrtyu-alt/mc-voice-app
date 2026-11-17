@@ -65,6 +65,10 @@ class MainActivity : Activity() {
         startEverything()
     }
 
+    fun askMic() {
+        requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_PERMS)
+    }
+
     private fun startEverything() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             try {
